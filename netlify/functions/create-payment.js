@@ -46,7 +46,7 @@ exports.handler = async (event) => {
     if (cleanDocument.length !== 11 && cleanDocument.length !== 14) {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'Documento inválido.' }) };
     }
-    if (parseFloat(amount) < 30) {
+    if (parseFloat(amount) < 1) {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'Depósito mínimo é R$ 30,00' }) };
     }
 
