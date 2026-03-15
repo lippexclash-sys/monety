@@ -10,7 +10,6 @@ import {
 import {
   doc,
   setDoc,
-  getDoc,
   collection,
   query,
   where,
@@ -18,18 +17,20 @@ import {
   onSnapshot,
   serverTimestamp,
   updateDoc,
-  increment
+  increment,
+  addDoc
 } from 'firebase/firestore';
 
 import { auth, db } from '../firebase/firebase';
 
+// Interface do Usuário adaptada para suportar o sistema de afiliados
 interface User {
   id: string;
   name: string;
   email: string;
   balance: number;
   inviteCode: string;
-  referredBy?: string | null; // Alterado de invitedBy para referredBy conforme solicitado
+  referredBy?: string | null; 
   totalEarned: number;
   totalWithdrawn: number;
   spinsAvailable: number;
@@ -51,11 +52,10 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 /* =========================
-   LÓGICA DE CÓDIGO ÚNICO
+   LÓGICA DE GERAÇÃO DE CÓDIGO ÚNICO
 ========================= */
 
 const generateInviteCode = (): string => {
-  // Gera 6 caracteres aleatórios (ex: ABC123)
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 };
 
@@ -63,7 +63,6 @@ const generateUniqueInviteCode = async (): Promise<string> => {
   let code = generateInviteCode();
   const usersRef = collection(db, 'users');
   
-  // Verifica se já existe, se sim, tenta de novo (máximo 5 vezes)
   for (let i = 0; i < 5; i++) {
     const q = query(usersRef, where('inviteCode', '==', code));
     const snapshot = await getDocs(q);
@@ -74,7 +73,7 @@ const generateUniqueInviteCode = async (): Promise<string> => {
 };
 
 /* =========================
-   PROVIDER
+   PROVIDER PRINCIPAL
 ========================= */
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -94,17 +93,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const userDocRef = doc(db, 'users', firebaseUser.uid);
 
-      // LISTENER EM TEMPO REAL
+      // Listener em tempo real para refletir mudanças de saldo e bônus instantaneamente
       unsubscribeUser = onSnapshot(userDocRef, async (docSnap) => {
         if (!docSnap.exists()) return;
         
         const data = docSnap.data();
 
-        // --- TRAVA DE SEGURANÇA: GERA CÓDIGO SE NÃO EXISTIR ---
+        // Garante que todo usuário tenha um código de convite próprio
         if (!data.inviteCode) {
           const newCode = await generateUniqueInviteCode();
           await updateDoc(userDocRef, { inviteCode: newCode });
-          return; // O onSnapshot disparará novamente com o novo código
+          return;
         }
 
         setUser({
@@ -133,41 +132,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   /* =========================
-     REGISTER (CORRIGIDO)
+     REGISTER ADAPTADO PARA 3 NÍVEIS
   ========================= */
 
   const register = async (email: string, password: string, name: string, inviteCodeInput?: string) => {
     try {
-      // 1. Criar o usuário no Auth
+      // 1. Cria a conta no Firebase Auth
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const uid = userCredential.user.uid;
 
       let inviterUid: string | null = null;
 
-      // 2. Buscar quem convidou (se houver código)
+      // 2. Processa o código de convite (se fornecido)
       if (inviteCodeInput && inviteCodeInput.trim() !== "") {
         const usersRef = collection(db, 'users');
         const q = query(usersRef, where('inviteCode', '==', inviteCodeInput.trim().toUpperCase()));
         const snapshot = await getDocs(q);
 
         if (!snapshot.empty) {
-          inviterUid = snapshot.docs[0].id;
+          inviterUid = snapshot.docs[0].id; // ID do usuário que convidou
+
+          // 3. Registra na coleção 'invites' com status pending
+          // O seu webhook mudará este status para 'completed' no primeiro depósito
+          await addDoc(collection(db, 'invites'), {
+            createdAt: serverTimestamp(),
+            invitedId: uid,
+            inviterId: inviterUid,
+            level: 1,
+            status: "pending"
+          });
         }
       }
 
-      // 3. Gerar código de convite para o novo usuário
+      // 4. Gera o código de convite do novo usuário
       const myInviteCode = await generateUniqueInviteCode();
 
-      // 4. Criar documento no Firestore
+      // 5. Salva o perfil completo no Firestore
       await setDoc(doc(db, 'users', uid), {
         name: name,
         email: email,
         balance: 0,
         inviteCode: myInviteCode,
-        referredBy: inviterUid || null,
+        referredBy: inviterUid || null, // Vínculo essencial para o sistema de 20%, 5% e 1%
         totalEarned: 0,
         totalWithdrawn: 0,
-        spinsAvailable: 1, // Bônus inicial
+        spinsAvailable: 1, 
         role: 'user',
         createdAt: serverTimestamp()
       });
@@ -179,7 +188,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   /* =========================
-     OUTRAS FUNÇÕES (LOGIN/BALANÇO)
+     FUNÇÕES AUXILIARES
   ========================= */
 
   const login = async (email: string, password: string) => {
