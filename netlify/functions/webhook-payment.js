@@ -15,23 +15,28 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
+// ... (mantenha a inicialização do firebase-admin igual ao anterior)
+
 exports.handler = async (event) => {
-  // 1. Log para depuração (ver o que a EvoPay está enviando)
   console.log("=== WEBHOOK RECEBIDO ===", event.body);
   
   try {
     const body = JSON.parse(event.body);
-    const userId = event.queryStringParameters.u; // Pegamos o ID que você passou na URL
+    const userId = event.queryStringParameters.u; 
 
-    // A EvoPay geralmente envia status 'PAID' ou 'SUCCESS'
-    const isPaid = body.status === 'PAID' || body.status === 'SUCCESS' || body.success === true;
+    // AJUSTE AQUI: Adicionamos 'COMPLETED' que é o que a EvoPay envia nos logs
+    const isPaid = 
+      body.status === 'COMPLETED' || 
+      body.status === 'PAID' || 
+      body.status === 'SUCCESS' || 
+      body.success === true;
 
     if (!isPaid) {
+      console.log(`Pagamento ignorado. Status recebido: ${body.status}`);
       return { statusCode: 200, body: 'Pagamento ainda não aprovado' };
     }
 
-    // 2. Localizar o depósito pendente no Firestore
-    // Buscamos o depósito mais recente 'pending' deste usuário
+    // O restante do código de busca de depósito e atualização de saldo continua igual...
     const depositsRef = db.collection('deposits');
     const snapshot = await depositsRef
       .where('userId', '==', userId)
@@ -41,15 +46,14 @@ exports.handler = async (event) => {
       .get();
 
     if (snapshot.empty) {
-      console.error("Nenhum depósito pendente encontrado para este usuário.");
+      console.error("Nenhum depósito pendente encontrado para o usuário:", userId);
       return { statusCode: 404, body: 'Deposito nao encontrado' };
     }
 
     const depositDoc = snapshot.docs[0];
-    const depositData = depositDoc.data();
-    const amount = depositData.amount;
+    const amount = depositDoc.data().amount;
 
-    // 3. ATUALIZAÇÃO ATÔMICA (Evita erros de saldo)
+    // Atualização do Saldo
     const userRef = db.collection('users').doc(userId);
     
     await db.runTransaction(async (transaction) => {
@@ -58,19 +62,27 @@ exports.handler = async (event) => {
 
       const userData = userSnap.data();
 
-      // A) Aprova o depósito
+      // 1. Aprova o depósito
       transaction.update(depositDoc.ref, { 
         status: 'approved', 
-        paidAt: admin.firestore.FieldValue.serverTimestamp() 
+        paidAt: admin.firestore.FieldValue.serverTimestamp(),
+        gatewayTransactionId: body.id // Salva o ID da EvoPay para referência
       });
 
-      // B) Adiciona o saldo ao usuário
+      // 2. Adiciona o saldo
       const newBalance = (userData.balance || 0) + amount;
       transaction.update(userRef, { balance: newBalance });
-      
-      console.log(`Saldo atualizado: +R$${amount} para o usuário ${userId}`);
+    });
 
-      // C) LÓGICA DE COMISSÃO DE EQUIPE (Opcional, mas recomendado para o seu projeto)
+    console.log(`SUCESSO: R$${amount} creditados para o usuário ${userId}`);
+    return { statusCode: 200, body: JSON.stringify({ success: true }) };
+
+  } catch (error) {
+    console.error("Erro no processamento do Webhook:", error);
+    return { statusCode: 500, body: 'Erro interno' };
+  }
+};
+   // C) LÓGICA DE COMISSÃO DE EQUIPE (Opcional, mas recomendado para o seu projeto)
       // Se o usuário foi indicado por alguém (Nível 1)
       if (userData.referredBy) {
         const ref1Ref = db.collection('users').doc(userData.referredBy);
