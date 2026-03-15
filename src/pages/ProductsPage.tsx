@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from '../components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
 import { TrendingUp, History, X, Timer, Pickaxe, Gem, Crown, Sparkles, Star, Award, Clock, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -22,7 +22,7 @@ import {
 import { db } from '../firebase/firebase';
 
 /* ==================================================================================
-   INTERFACES & CONFIGURAÇÃO VISUAL (MANTIDAS DO ORIGINAL)
+   INTERFACES & CONFIGURAÇÃO VISUAL
    ================================================================================== */
 
 interface Product {
@@ -43,9 +43,9 @@ interface Investment {
   amount: number;
   daily_return: number;
   days_remaining: number;
-  days_elapsed: number; // Adicionado para controle visual
-  created_at: any; // Pode ser Timestamp ou Date
-  days_paid?: number; // Controle de pagamentos
+  days_elapsed: number;
+  created_at: any;
+  days_paid?: number;
 }
 
 const tierColors: Record<string, { bg: string; border: string; icon: string }> = {
@@ -91,26 +91,23 @@ export default function ProductsPage() {
   const [loading, setLoading] = useState(true);
   const [showHistory, setShowHistory] = useState(false);
 
-  // Inicialização
   useEffect(() => {
     const init = async () => {
       await fetchProducts();
       if (user?.id) {
-        await processInvestments(); // Nova lógica de processamento
+        await processInvestments();
       }
       setLoading(false);
     };
     init();
 
-    // Timer para atualizar visualmente a barra de progresso a cada minuto (opcional)
     const interval = setInterval(() => {
-       if (user?.id) processInvestments(false); // False = não buscar no banco, apenas recalcular visual
+       if (user?.id) processInvestments(false);
     }, 60000);
 
     return () => clearInterval(interval);
   }, [user?.id]);
 
-  /* --- BUSCAR PRODUTOS --- */
   const fetchProducts = async () => {
     try {
       const productsRef = collection(db, 'products');
@@ -122,7 +119,7 @@ export default function ProductsPage() {
           return {
             id: doc.id,
             ...pData,
-            tier: pData.tier || ['bronze', 'silver', 'gold'][idx % 3], // Fallback seguro
+            tier: pData.tier || ['bronze', 'silver', 'gold'][idx % 3],
             icon: pData.icon || 'pickaxe'
           } as Product;
         });
@@ -136,14 +133,12 @@ export default function ProductsPage() {
     }
   };
 
-  /* --- LÓGICA DE INVESTIMENTOS, TEMPO E PAGAMENTO --- */
   const processInvestments = async (fetchFromDb = true) => {
     if (!user?.id) return;
 
     try {
       let currentData = investments;
 
-      // 1. Busca dados do Firebase se necessário
       if (fetchFromDb) {
         const q = query(collection(db, 'investments'), where('userId', '==', user.id));
         const snapshot = await getDocs(q);
@@ -158,31 +153,24 @@ export default function ProductsPage() {
       let totalEarnings = 0;
       let updatesCount = 0;
 
-      // 2. Processa cada investimento
       const processed = currentData.map(inv => {
-        // Conversão segura de Timestamp do Firebase para Date JS
         let createdAt: Date;
         if (inv.created_at?.toDate) {
             createdAt = inv.created_at.toDate();
         } else if (inv.created_at instanceof Date) {
             createdAt = inv.created_at;
         } else {
-            createdAt = new Date(); // Fallback de segurança para evitar tela preta
+            createdAt = new Date();
         }
 
         const duration = inv.duration_days || 60;
         
-        // CÁLCULO DE DIAS (Lógica de 24h exatas)
-        // 86400000 ms = 24 horas
         const diffMs = Math.max(0, now.getTime() - createdAt.getTime());
-        const daysElapsed = Math.floor(diffMs / 86400000); // Arredonda para baixo (23h = 0 dias)
+        const daysElapsed = Math.floor(diffMs / 86400000);
         
-        // Garante que não passe do limite do plano
         const effectiveDays = Math.min(daysElapsed, duration);
         const daysRemaining = Math.max(0, duration - effectiveDays);
 
-        // LÓGICA DE PAGAMENTO AUTOMÁTICO
-        // Verifica se o usuário tem dias "trabalhados" que ainda não foram pagos
         const daysPaid = inv.days_paid || 0;
         
         if (effectiveDays > daysPaid && inv.status === 'active') {
@@ -193,11 +181,9 @@ export default function ProductsPage() {
                 totalEarnings += profit;
                 updatesCount++;
                 
-                // Agenda atualização no banco
                 const invRef = doc(db, 'investments', inv.id);
                 batch.update(invRef, { days_paid: effectiveDays });
                 
-                // Atualiza localmente para refletir na UI imediatamente
                 inv.days_paid = effectiveDays;
             }
         }
@@ -212,7 +198,6 @@ export default function ProductsPage() {
 
       setInvestments(processed);
 
-      // 3. Executa pagamentos e notifica
       if (updatesCount > 0) {
         const userRef = doc(db, 'users', user.id);
         batch.update(userRef, {
@@ -229,7 +214,6 @@ export default function ProductsPage() {
     }
   };
 
-  /* --- NOTIFICAÇÃO PERSONALIZADA --- */
   const showProfitNotification = (amount: number) => {
     toast.custom((t) => (
       <div className="bg-[#111111] border border-[#22c55e]/30 rounded-lg p-4 shadow-lg shadow-[#22c55e]/10 flex items-center gap-4 animate-in slide-in-from-top-2 fade-in duration-300 pointer-events-auto">
@@ -249,7 +233,6 @@ export default function ProductsPage() {
     ), { duration: 5000 });
   };
 
-  /* --- COMPRAR PRODUTO --- */
   const handleInvestment = async (product: Product) => {
     const userBalance = Number(user?.balance) || 0;
     
@@ -266,13 +249,11 @@ export default function ProductsPage() {
     }
 
     try {
-      // 1. Desconta o saldo
       const userRef = doc(db, 'users', user.id);
       await updateDoc(userRef, {
         balance: increment(-product.price)
       });
 
-      // 2. Cria o investimento com timestamp do servidor (segurança)
       await addDoc(collection(db, 'investments'), {
         userId: user.id,
         productId: product.id,
@@ -281,15 +262,14 @@ export default function ProductsPage() {
         daily_return: product.daily_return,
         duration_days: product.duration_days,
         status: 'active',
-        created_at: serverTimestamp(), // Usa hora do servidor
-        days_paid: 0 // Começa com 0 dias pagos
+        created_at: serverTimestamp(),
+        days_paid: 0
       });
 
       toast.success('🎉 Compra realizada!', {
         description: `Você adquiriu o ${product.name} com sucesso`
       });
       
-      // Atualiza lista
       processInvestments(true);
 
     } catch (err) {
@@ -310,7 +290,7 @@ export default function ProductsPage() {
   }
 
   /* ==================================================================================
-     RENDERIZAÇÃO (INTERFACE ORIGINAL)
+     RENDERIZAÇÃO
      ================================================================================== */
   return (
     <div className="space-y-6 pb-6 animate-fade-in">
@@ -431,68 +411,74 @@ export default function ProductsPage() {
       {/* History Modal */}
       <Dialog open={showHistory} onOpenChange={setShowHistory}>
         <DialogContent className="bg-[#111111] border-[#1a1a1a] text-white max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center justify-between">
-              <span>Histórico de Compras</span>
-              <button
-                onClick={() => setShowHistory(false)}
-                className="w-10 h-10 bg-[#0a0a0a] rounded-full flex items-center justify-center hover:bg-[#1a1a1a] transition-colors"
-              >
-                <X className="w-5 h-5 text-gray-400" />
-              </button>
-            </DialogTitle>
+          
+          <DialogHeader className="flex flex-row items-center justify-between pb-2 border-b border-[#1a1a1a]">
+            <div>
+              <DialogTitle className="text-xl font-bold text-white">Histórico de Compras</DialogTitle>
+              <DialogDescription className="text-gray-500 mt-1">
+                Visualize seus mineradores ativos e rendimentos.
+              </DialogDescription>
+            </div>
+            
+            <button
+              onClick={() => setShowHistory(false)}
+              className="w-10 h-10 bg-[#0a0a0a] rounded-full flex items-center justify-center hover:bg-[#1a1a1a] transition-colors shrink-0"
+            >
+              <X className="w-5 h-5 text-gray-400" />
+            </button>
           </DialogHeader>
 
-          {investments.length === 0 ? (
-            <div className="text-center py-8">
-              <History className="w-12 h-12 text-gray-600 mx-auto mb-3" />
-              <p className="text-gray-400">Nenhum investimento ativo</p>
-              <p className="text-gray-500 text-sm">Compre um produto para começar a ganhar</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {investments.map((inv) => {
-                const totalDays = inv.duration_days || 60;
-                // Calculo de progresso baseado no tempo real
-                const progress = Math.min(100, ((inv.days_elapsed || 0) / totalDays) * 100);
+          <div className="pt-4">
+            {investments.length === 0 ? (
+              <div className="text-center py-8">
+                <History className="w-12 h-12 text-gray-600 mx-auto mb-3" />
+                <p className="text-gray-400">Nenhum investimento ativo</p>
+                <p className="text-gray-500 text-sm">Compre um produto para começar a ganhar</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {investments.map((inv) => {
+                  const totalDays = inv.duration_days || 60;
+                  const progress = Math.min(100, ((inv.days_elapsed || 0) / totalDays) * 100);
 
-                return (
-                  <div key={inv.id} className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-xl p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="font-semibold text-white">{inv.product_name}</h3>
-                      <span className="text-[#22c55e] font-bold">R$ {Number(inv.amount).toFixed(2)}</span>
-                    </div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2 text-gray-400 text-sm">
-                        <Timer className="w-4 h-4" />
-                        <span>Tempo restante</span>
+                  return (
+                    <div key={inv.id} className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-xl p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="font-semibold text-white">{inv.product_name}</h3>
+                        <span className="text-[#22c55e] font-bold">R$ {Number(inv.amount).toFixed(2)}</span>
                       </div>
-                      <div className="bg-[#22c55e]/20 px-3 py-1 rounded-full">
-                        <span className="text-[#22c55e] font-bold text-sm">{inv.days_remaining} dias</span>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2 text-gray-400 text-sm">
+                          <Timer className="w-4 h-4" />
+                          <span>Tempo restante</span>
+                        </div>
+                        <div className="bg-[#22c55e]/20 px-3 py-1 rounded-full">
+                          <span className="text-[#22c55e] font-bold text-sm">{inv.days_remaining} dias</span>
+                        </div>
                       </div>
-                    </div>
-                    
-                    {/* Barra de Progresso */}
-                    <div className="bg-[#1a1a1a] rounded-full h-2 overflow-hidden mb-2 relative">
-                      <div
-                        className="bg-gradient-to-r from-[#22c55e] to-[#16a34a] h-full transition-all duration-1000"
-                        style={{ width: `${progress}%` }}
-                      />
-                    </div>
+                      
+                      {/* Barra de Progresso */}
+                      <div className="bg-[#1a1a1a] rounded-full h-2 overflow-hidden mb-2 relative">
+                        <div
+                          className="bg-gradient-to-r from-[#22c55e] to-[#16a34a] h-full transition-all duration-1000"
+                          style={{ width: `${progress}%` }}
+                        />
+                      </div>
 
-                    <div className="flex justify-between text-xs mt-2">
-                        <span className="text-gray-500">
-                          Rendimento diário: <span className="text-[#22c55e]">+R$ {Number(inv.daily_return).toFixed(2)}</span>
-                        </span>
-                        <span className="text-gray-600">
-                           {inv.days_elapsed} / {totalDays} dias
-                        </span>
+                      <div className="flex justify-between text-xs mt-2">
+                          <span className="text-gray-500">
+                            Rendimento diário: <span className="text-[#22c55e]">+R$ {Number(inv.daily_return).toFixed(2)}</span>
+                          </span>
+                          <span className="text-gray-600">
+                             {inv.days_elapsed} / {totalDays} dias
+                          </span>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>
