@@ -1,42 +1,38 @@
 const admin = require('firebase-admin');
 
 if (!admin.apps.length) {
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY;
-  if (privateKey) {
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId: process.env.FIREBASE_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: privateKey.replace(/\\n/g, '\n')
-      })
-    });
-  }
+  admin.initializeApp({
+    credential: admin.credential.cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+    })
+  });
 }
 
 const db = admin.firestore();
 
-// ... (mantenha a inicialização do firebase-admin igual ao anterior)
-
 exports.handler = async (event) => {
-  console.log("=== WEBHOOK RECEBIDO ===", event.body);
+  console.log("=== WEBHOOK RECEBIDO ===");
   
   try {
     const body = JSON.parse(event.body);
-    const userId = event.queryStringParameters.u; 
+    const userId = event.queryStringParameters ? event.queryStringParameters.u : null;
 
-    // AJUSTE AQUI: Adicionamos 'COMPLETED' que é o que a EvoPay envia nos logs
-    const isPaid = 
-      body.status === 'COMPLETED' || 
-      body.status === 'PAID' || 
-      body.status === 'SUCCESS' || 
-      body.success === true;
-
-    if (!isPaid) {
-      console.log(`Pagamento ignorado. Status recebido: ${body.status}`);
-      return { statusCode: 200, body: 'Pagamento ainda não aprovado' };
+    if (!userId) {
+      console.error("ERRO: ID do usuário (u) não enviado na URL");
+      return { statusCode: 400, body: 'Falta ID do usuario' };
     }
 
-    // O restante do código de busca de depósito e atualização de saldo continua igual...
+    // Verifica status da EvoPay
+    const isPaid = body.status === 'COMPLETED' || body.status === 'PAID' || body.success === true;
+
+    if (!isPaid) {
+      console.log(`Pagamento ainda pendente no gateway: ${body.status}`);
+      return { statusCode: 200, body: 'Aguardando aprovacao' };
+    }
+
+    // Busca o depósito pendente
     const depositsRef = db.collection('deposits');
     const snapshot = await depositsRef
       .where('userId', '==', userId)
@@ -46,80 +42,46 @@ exports.handler = async (event) => {
       .get();
 
     if (snapshot.empty) {
-      console.error("Nenhum depósito pendente encontrado para o usuário:", userId);
-      return { statusCode: 404, body: 'Deposito nao encontrado' };
+      console.error(`Nenhum deposito pendente para o user: ${userId}`);
+      return { statusCode: 404, body: 'Nao encontrado' };
     }
 
     const depositDoc = snapshot.docs[0];
     const amount = depositDoc.data().amount;
-
-    // Atualização do Saldo
     const userRef = db.collection('users').doc(userId);
-    
+
+    // Transação para garantir que tudo atualize junto
     await db.runTransaction(async (transaction) => {
       const userSnap = await transaction.get(userRef);
-      if (!userSnap.exists) throw "Usuário não existe!";
+      if (!userSnap.exists) throw "Usuario nao existe no DB";
 
-      const userData = userSnap.data();
-
-      // 1. Aprova o depósito
+      // 1. Atualiza depósito
       transaction.update(depositDoc.ref, { 
         status: 'approved', 
-        paidAt: admin.firestore.FieldValue.serverTimestamp(),
-        gatewayTransactionId: body.id // Salva o ID da EvoPay para referência
+        paidAt: admin.firestore.FieldValue.serverTimestamp() 
       });
 
-      // 2. Adiciona o saldo
-      const newBalance = (userData.balance || 0) + amount;
-      transaction.update(userRef, { balance: newBalance });
-    });
+      // 2. Atualiza saldo
+      transaction.update(userRef, { 
+        balance: admin.firestore.FieldValue.increment(amount) 
+      });
 
-    console.log(`SUCESSO: R$${amount} creditados para o usuário ${userId}`);
-    return { statusCode: 200, body: JSON.stringify({ success: true }) };
-
-  } catch (error) {
-    console.error("Erro no processamento do Webhook:", error);
-    return { statusCode: 500, body: 'Erro interno' };
-  }
-};
-   // C) LÓGICA DE COMISSÃO DE EQUIPE (Opcional, mas recomendado para o seu projeto)
-      // Se o usuário foi indicado por alguém (Nível 1)
+      // 3. Comissão (Opcional - Exemplo Nível 1)
+      const userData = userSnap.data();
       if (userData.referredBy) {
-        const ref1Ref = db.collection('users').doc(userData.referredBy);
-        const bonus1 = amount * 0.20; // 20%
-        transaction.update(ref1Ref, { 
-          balance: admin.firestore.FieldValue.increment(bonus1),
-          totalCommissions: admin.firestore.FieldValue.increment(bonus1)
+        const refRef = db.collection('users').doc(userData.referredBy);
+        transaction.update(refRef, { 
+          balance: admin.firestore.FieldValue.increment(amount * 0.20), // 10% de exemplo
+          totalCommissions: admin.firestore.FieldValue.increment(amount * 0.10)
         });
-
-        // Nível 2
-        const ref1Snap = await transaction.get(ref1Ref);
-        if (ref1Snap.exists() && ref1Snap.data().referredBy) {
-          const ref2Ref = db.collection('users').doc(ref1Snap.data().referredBy);
-          const bonus2 = amount * 0.05; // 5%
-          transaction.update(ref2Ref, { 
-            balance: admin.firestore.FieldValue.increment(bonus2),
-            totalCommissions: admin.firestore.FieldValue.increment(bonus2)
-          });
-
-          // Nível 3
-          const ref2Snap = await transaction.get(ref2Ref);
-          if (ref2Snap.exists() && ref2Snap.data().referredBy) {
-            const ref3Ref = db.collection('users').doc(ref2Snap.data().referredBy);
-            const bonus3 = amount * 0.01; // 1%
-            transaction.update(ref3Ref, { 
-              balance: admin.firestore.FieldValue.increment(bonus3),
-              totalCommissions: admin.firestore.FieldValue.increment(bonus3)
-            });
-          }
-        }
       }
     });
 
+    console.log(`SUCESSO: R$${amount} creditado para ${userId}`);
     return { statusCode: 200, body: JSON.stringify({ success: true }) };
 
   } catch (error) {
-    console.error("Erro no Webhook:", error);
+    console.error("ERRO NO PROCESSAMENTO:", error);
     return { statusCode: 500, body: 'Erro interno' };
   }
 };
