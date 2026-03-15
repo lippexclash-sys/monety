@@ -1,34 +1,42 @@
 const admin = require('firebase-admin');
 
+// Inicialização segura do Firebase
 if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
-    })
-  });
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY;
+  if (privateKey) {
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: privateKey.replace(/\\n/g, '\n')
+      })
+    });
+  }
 }
 
-const db = admin.firestore();
+const db = admin.apps.length ? admin.firestore() : null;
 
 exports.handler = async (event) => {
   try {
+    if (!db) throw new Error("Banco de dados não conectado.");
+
     const body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
     const transactionId = body.id || body.reference || (event.queryStringParameters ? event.queryStringParameters.id : null);
 
-    if (!transactionId) return { statusCode: 400, body: 'ID ausente' };
+    // Retorna JSON padronizado
+    if (!transactionId) return { statusCode: 400, body: JSON.stringify({ error: 'ID ausente' }) };
 
     const statusCeto = String(body.status).toUpperCase();
     const isPaid = statusCeto === 'PAID' || statusCeto === 'COMPLETED' || body.success === true;
 
-    if (!isPaid) return { statusCode: 200, body: 'Aguardando' };
+    // Retorna JSON padronizado
+    if (!isPaid) return { statusCode: 200, body: JSON.stringify({ message: 'Aguardando pagamento' }) };
 
     const depositRef = db.collection('deposits').doc(transactionId);
     const depositDoc = await depositRef.get();
 
     if (!depositDoc.exists || depositDoc.data().status === 'approved') {
-      return { statusCode: 200, body: 'Já processado' };
+      return { statusCode: 200, body: JSON.stringify({ message: 'Já processado ou não encontrado' }) };
     }
 
     const { userId, amount } = depositDoc.data();
@@ -36,22 +44,24 @@ exports.handler = async (event) => {
 
     await db.runTransaction(async (transaction) => {
       const userSnap = await transaction.get(userRef);
-      if (!userSnap.exists) throw new Error("Usuário não existe");
+      if (!userSnap.exists) {
+         throw new Error(`Usuário não existe: ${userId}`);
+      }
 
       // 1. Atualiza depósito e saldo do jogador
       transaction.update(depositRef, { status: 'approved', paidAt: admin.firestore.FieldValue.serverTimestamp() });
       transaction.update(userRef, { balance: admin.firestore.FieldValue.increment(Number(amount)) });
 
-      // 2. Atualiza o status do convite na coleção 'invites' para 'completed'
-      // Isso marca que o convidado fez o primeiro depósito
-      const inviteQuery = await db.collection('invites')
+      // 2. Atualiza o status do convite na coleção 'invites' (Usando transaction.get para manter consistência)
+      const inviteQuery = db.collection('invites')
         .where('invitedId', '==', userId)
         .where('status', '==', 'pending')
-        .limit(1)
-        .get();
+        .limit(1);
+        
+      const inviteSnap = await transaction.get(inviteQuery);
       
-      if (!inviteQuery.empty) {
-        transaction.update(inviteQuery.docs[0].ref, { status: 'completed' });
+      if (!inviteSnap.empty) {
+        transaction.update(inviteSnap.docs[0].ref, { status: 'completed' });
       }
 
       // 3. Distribuição de Comissões em Cadeia
@@ -106,9 +116,10 @@ exports.handler = async (event) => {
       }
     });
 
-    return { statusCode: 200, body: JSON.stringify({ success: true }) };
+    return { statusCode: 200, body: JSON.stringify({ success: true, message: 'Processado com sucesso' }) };
   } catch (error) {
     console.error("Erro no processamento:", error);
-    return { statusCode: 500, body: 'Erro interno' };
+    // Devolve JSON para o frontend não engasgar
+    return { statusCode: 500, body: JSON.stringify({ error: error.message || 'Erro interno' }) };
   }
 };
