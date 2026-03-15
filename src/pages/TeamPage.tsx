@@ -6,7 +6,7 @@ import { Users, Copy, Check, Share2, TrendingUp, Award } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { db } from "../firebase/firebase"; 
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 
 interface TeamMember {
   id: string;
@@ -34,16 +34,15 @@ export default function TeamPage() {
   const [activeLevel, setActiveLevel] = useState<1 | 2 | 3>(1);
   const [copied, setCopied] = useState(false);
 
-  const inviteLink = `${window.location.origin}/?code=${user?.invite_code}`;
+  // CORREÇÃO: Usar inviteCode (camelCase) como definido no AuthContext
+  const inviteLink = `${window.location.origin}/?code=${user?.inviteCode}`;
 
   useEffect(() => {
-    // Correção: Garantir que capturamos o ID independente de como o AuthContext o chama
-    const userId = user?.id || user?.uid;
+    const userId = user?.id; // Pegamos o ID do AuthContext
     
     if (userId) {
       fetchRealTeamData(userId);
     } else if (user === null) {
-      // Se não há usuário logado, para o loading
       setLoading(false);
     }
   }, [user]);
@@ -51,50 +50,41 @@ export default function TeamPage() {
   const fetchRealTeamData = async (userId: string) => {
     setLoading(true);
     try {
-      const invitesRef = collection(db, 'invites');
+      const usersRef = collection(db, 'users');
       
-      // --- NÍVEL 1 ---
-      const q1 = query(invitesRef, where('inviterId', '==', userId));
+      // --- NÍVEL 1: Quem foi convidado diretamente por este userId ---
+      const q1 = query(usersRef, where('referredBy', '==', userId));
       const snap1 = await getDocs(q1);
       
-      const l1Docs = snap1.docs.map(d => d.data());
-      const l1InvitedIds = l1Docs.map(d => d.invitedId);
+      const l1Docs = snap1.docs.map(d => ({ id: d.id, ...d.data() }));
+      const l1Ids = l1Docs.map(d => d.id);
 
-      // --- NÍVEL 2 --- (Busca paralela)
-      const l2Promises = l1InvitedIds.map(id => getDocs(query(invitesRef, where('inviterId', '==', id))));
-      const snap2Array = await Promise.all(l2Promises);
-      const l2Docs = snap2Array.flatMap(snap => snap.docs.map(d => d.data()));
-      const l2InvitedIds = l2Docs.map(d => d.invitedId);
+      // --- NÍVEL 2: Quem foi convidado por alguém do Nível 1 ---
+      let l2Docs: any[] = [];
+      let l2Ids: string[] = [];
+      if (l1Ids.length > 0) {
+        const l2Promises = l1Ids.map(id => getDocs(query(usersRef, where('referredBy', '==', id))));
+        const snap2Array = await Promise.all(l2Promises);
+        l2Docs = snap2Array.flatMap(snap => snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        l2Ids = l2Docs.map(d => d.id);
+      }
 
-      // --- NÍVEL 3 --- (Busca paralela)
-      const l3Promises = l2InvitedIds.map(id => getDocs(query(invitesRef, where('inviterId', '==', id))));
-      const snap3Array = await Promise.all(l3Promises);
-      const l3Docs = snap3Array.flatMap(snap => snap.docs.map(d => d.data()));
-      const l3InvitedIds = l3Docs.map(d => d.invitedId);
-
-      // --- BUSCAR EMAILS (Otimizado) ---
-      // Junta todos os IDs e remove duplicatas com Set
-      const allIds = Array.from(new Set([...l1InvitedIds, ...l2InvitedIds, ...l3InvitedIds]));
-
-      // Busca todos os perfis de usuários em paralelo
-      const userDocsPromises = allIds.map(id => getDoc(doc(db, 'users', id)));
-      const userDocsSnapshots = await Promise.all(userDocsPromises);
-
-      // Cria um mapa para busca rápida (Dicionário: { "id1": "email1", "id2": "email2" })
-      const emailMap: Record<string, string> = {};
-      userDocsSnapshots.forEach(snap => {
-        if (snap.exists()) {
-          emailMap[snap.id] = snap.data().email || 'Sem E-mail';
-        }
-      });
+      // --- NÍVEL 3: Quem foi convidado por alguém do Nível 2 ---
+      let l3Docs: any[] = [];
+      if (l2Ids.length > 0) {
+        const l3Promises = l2Ids.map(id => getDocs(query(usersRef, where('referredBy', '==', id))));
+        const snap3Array = await Promise.all(l3Promises);
+        l3Docs = snap3Array.flatMap(snap => snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      }
 
       // --- FUNÇÃO AUXILIAR PARA FORMATAR OS DADOS ---
       const formatMembers = (docs: any[]): TeamMember[] => {
         return docs.map(d => ({
-          id: d.invitedId,
-          email: emailMap[d.invitedId] || 'Usuário Oculto',
-          status: d.status || 'pending',
-          created_at: d.createdAt?.toDate ? d.createdAt.toDate().toISOString() : new Date().toISOString()
+          id: d.id,
+          email: d.email || 'Usuário Oculto',
+          status: 'active', // Se houver sistema de depósito, altere a validação aqui
+          // Tratamento para a data do Firebase (Timestamp vs String)
+          created_at: d.createdAt?.toDate ? d.createdAt.toDate().toISOString() : d.createdAt || new Date().toISOString()
         }));
       };
 
@@ -102,9 +92,8 @@ export default function TeamPage() {
       const members2 = formatMembers(l2Docs);
       const members3 = formatMembers(l3Docs);
 
-      // Cálculo de ganhos apenas para quem NÃO está pendente
-      const calcEarned = (members: TeamMember[], value: number) => 
-        members.filter(m => m.status !== 'pending').length * value;
+      // Cálculo de ganhos (Adapte os valores de R$10, R$5 e R$2 conforme sua regra de negócios real)
+      const calcEarned = (members: TeamMember[], value: number) => members.length * value;
 
       setTeamData({
         level1: { count: members1.length, totalEarned: calcEarned(members1, 10), members: members1 },
@@ -114,15 +103,15 @@ export default function TeamPage() {
 
     } catch (err) {
       console.error('Erro ao carregar equipe:', err);
-      toast.error('Erro ao carregar equipe');
+      toast.error('Erro ao carregar os membros da equipe');
     } finally {
       setLoading(false);
     }
   };
 
   const handleCopyCode = () => {
-    if (user?.invite_code) {
-      navigator.clipboard.writeText(user.invite_code);
+    if (user?.inviteCode) {
+      navigator.clipboard.writeText(user.inviteCode);
       setCopied(true);
       toast.success('Código copiado!');
       setTimeout(() => setCopied(false), 2000);
@@ -133,7 +122,7 @@ export default function TeamPage() {
     if (navigator.share) {
       navigator.share({
         title: 'Junte-se ao Monety',
-        text: `Use meu código de convite: ${user?.invite_code}`,
+        text: `Use meu código de convite: ${user?.inviteCode}`,
         url: inviteLink
       });
     } else {
@@ -247,10 +236,10 @@ export default function TeamPage() {
         <CardContent className="space-y-4">
           <div className="bg-[#0a0a0a] rounded-xl p-3">
             <p className="text-sm text-gray-400 mb-1">Código:</p>
-            <p className="text-[#22c55e] font-bold text-lg">{user?.invite_code}</p>
+            <p className="text-[#22c55e] font-bold text-lg">{user?.inviteCode || 'Gerando...'}</p>
           </div>
 
-          <div className="bg-[#0a0a0a] rounded-xl p-3">
+          <div className="bg-[#0a0a0a] rounded-xl p-3 overflow-hidden">
             <p className="text-sm text-gray-400 mb-1">Link:</p>
             <p className="text-gray-300 text-sm break-all">{inviteLink}</p>
           </div>
@@ -258,6 +247,7 @@ export default function TeamPage() {
           <div className="grid grid-cols-2 gap-3">
             <Button
               onClick={handleCopyCode}
+              disabled={!user?.inviteCode}
               className={`flex items-center justify-center gap-2 py-3 rounded-xl font-bold transition-all ${
                 copied
                   ? 'bg-[#22c55e] hover:bg-[#16a34a] text-white'
@@ -270,6 +260,7 @@ export default function TeamPage() {
 
             <Button
               onClick={handleShare}
+              disabled={!user?.inviteCode}
               className="flex items-center justify-center gap-2 bg-gradient-to-r from-[#22c55e] to-[#16a34a] hover:from-[#16a34a] hover:to-[#22c55e] text-white py-3 rounded-xl font-bold transition-all shadow-lg shadow-[#22c55e]/20"
             >
               <Share2 className="w-5 h-5" />
