@@ -59,17 +59,22 @@ exports.handler = async (event) => {
     const SITE_URL = process.env.URL || 'http://localhost:8888';
     const callbackUrl = `${SITE_URL}/.netlify/functions/webhook-payment?u=${userId}`;
 
-    // 1. Chamada à EvoPay
+    // 1. Gerar o ID do documento antecipadamente
+    const depositRef = db.collection('deposits').doc();
+    const transactionId = depositRef.id;
+
+    // 2. Chamada à EvoPay enviando a "reference"
     const response = await axios.post('https://pix.evopay.cash/v1/pix', {
       amount: parseFloat(amount),
       callbackUrl: callbackUrl,
       payerName: cleanName,
-      payerDocument: cleanDocument
+      payerDocument: cleanDocument,
+      reference: transactionId // <-- ID do Firestore enviado como referência
     }, {
       headers: { 'API-Key': evopayToken, 'Content-Type': 'application/json' }
     });
 
-    // 2. Extração Robusta do Código PIX
+    // 3. Extração Robusta do Código PIX
     const paymentData = response.data;
     
     // Mapeamos todas as chaves possíveis para máxima compatibilidade com as respostas da API
@@ -87,35 +92,31 @@ exports.handler = async (event) => {
       throw new Error("Código PIX não retornado pela EvoPay. Verifique os logs.");
     }
 
-    // 3. Geração do link da Imagem QR Code
+    // 4. Geração do link da Imagem QR Code
     const qrImage = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(brCode)}`;
     
-    const depositRef = db.collection('deposits').doc();
-    
-    // 4. Salvando no Firestore
+    // 5. Salvando no Firestore com o Vínculo e Referência Corretos
     await depositRef.set({
-      userId,
-      userName, 
+      userId: userId,
+      userName: userName, 
       amount: parseFloat(amount),
       pixCode: brCode, 
       qrImage: qrImage, 
-      transactionId: depositRef.id,
+      transactionId: transactionId,
       status: 'pending',
       gateway: 'evopay',
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    // 5. Retorno para o Frontend (React)
+    // 6. Retorno para o Frontend (React)
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify({
         success: true,
-        // Chaves no padrão camelCase
         pixCode: brCode,
         qrImage: qrImage,
-        transactionId: depositRef.id,
-        // Chaves de segurança no padrão snake_case (referência do seu código antigo)
+        transactionId: transactionId,
         pix_code: brCode,
         qr_image: qrImage 
       })
