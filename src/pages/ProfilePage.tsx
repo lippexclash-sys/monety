@@ -30,7 +30,7 @@ export default function ProfilePage() {
   const handleDeposit = async () => {
     const amount = Number(depositAmount);
     
-    if (!amount || amount < 30) {
+    if (!amount || amount < 1) {
       toast.error('Depósito mínimo é R$ 30,00');
       return;
     }
