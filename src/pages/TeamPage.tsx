@@ -12,7 +12,7 @@ interface TeamMember {
   id: string;
   email: string;
   created_at: string;
-  status: string; // Adicionado para mostrar se está pendente
+  status: string;
 }
 
 interface TeamData {
@@ -37,89 +37,72 @@ export default function TeamPage() {
   const inviteLink = `${window.location.origin}/?code=${user?.invite_code}`;
 
   useEffect(() => {
-    if (user?.uid) {
-      fetchRealTeamData();
+    // Correção: Garantir que capturamos o ID independente de como o AuthContext o chama
+    const userId = user?.id || user?.uid;
+    
+    if (userId) {
+      fetchRealTeamData(userId);
+    } else if (user === null) {
+      // Se não há usuário logado, para o loading
+      setLoading(false);
     }
   }, [user]);
 
-  // Função auxiliar para buscar o e-mail do usuário convidado
-  const getUserEmail = async (userId: string) => {
-    try {
-      const userDoc = await getDoc(doc(db, 'users', userId));
-      return userDoc.exists() ? userDoc.data().email : 'Usuário Oculto';
-    } catch {
-      return 'Usuário Oculto';
-    }
-  };
-
-  const fetchRealTeamData = async () => {
+  const fetchRealTeamData = async (userId: string) => {
     setLoading(true);
     try {
-      // Alterado para buscar na coleção 'invites' conforme seu print
       const invitesRef = collection(db, 'invites');
       
       // --- NÍVEL 1 ---
-      const q1 = query(invitesRef, where('inviterId', '==', user?.uid));
+      const q1 = query(invitesRef, where('inviterId', '==', userId));
       const snap1 = await getDocs(q1);
       
-      const members1: TeamMember[] = [];
-      const l1InvitedIds: string[] = [];
+      const l1Docs = snap1.docs.map(d => d.data());
+      const l1InvitedIds = l1Docs.map(d => d.invitedId);
 
-      for (const d of snap1.docs) {
-        const data = d.data();
-        l1InvitedIds.push(data.invitedId);
-        const email = await getUserEmail(data.invitedId);
-        
-        members1.push({
-          id: data.invitedId,
-          email: email,
-          status: data.status || 'pending',
-          created_at: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : new Date().toISOString()
-        });
-      }
+      // --- NÍVEL 2 --- (Busca paralela)
+      const l2Promises = l1InvitedIds.map(id => getDocs(query(invitesRef, where('inviterId', '==', id))));
+      const snap2Array = await Promise.all(l2Promises);
+      const l2Docs = snap2Array.flatMap(snap => snap.docs.map(d => d.data()));
+      const l2InvitedIds = l2Docs.map(d => d.invitedId);
 
-      // --- NÍVEL 2 ---
-      let members2: TeamMember[] = [];
-      const l2InvitedIds: string[] = [];
-      
-      if (l1InvitedIds.length > 0) {
-        for (const id of l1InvitedIds) {
-          const q = query(invitesRef, where('inviterId', '==', id));
-          const s = await getDocs(q);
-          for (const d of s.docs) {
-            const data = d.data();
-            l2InvitedIds.push(data.invitedId);
-            const email = await getUserEmail(data.invitedId);
-            members2.push({
-              id: data.invitedId,
-              email: email,
-              status: data.status || 'pending',
-              created_at: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : new Date().toISOString()
-            });
-          }
+      // --- NÍVEL 3 --- (Busca paralela)
+      const l3Promises = l2InvitedIds.map(id => getDocs(query(invitesRef, where('inviterId', '==', id))));
+      const snap3Array = await Promise.all(l3Promises);
+      const l3Docs = snap3Array.flatMap(snap => snap.docs.map(d => d.data()));
+      const l3InvitedIds = l3Docs.map(d => d.invitedId);
+
+      // --- BUSCAR EMAILS (Otimizado) ---
+      // Junta todos os IDs e remove duplicatas com Set
+      const allIds = Array.from(new Set([...l1InvitedIds, ...l2InvitedIds, ...l3InvitedIds]));
+
+      // Busca todos os perfis de usuários em paralelo
+      const userDocsPromises = allIds.map(id => getDoc(doc(db, 'users', id)));
+      const userDocsSnapshots = await Promise.all(userDocsPromises);
+
+      // Cria um mapa para busca rápida (Dicionário: { "id1": "email1", "id2": "email2" })
+      const emailMap: Record<string, string> = {};
+      userDocsSnapshots.forEach(snap => {
+        if (snap.exists()) {
+          emailMap[snap.id] = snap.data().email || 'Sem E-mail';
         }
-      }
+      });
 
-      // --- NÍVEL 3 ---
-      let members3: TeamMember[] = [];
-      if (l2InvitedIds.length > 0) {
-        for (const id of l2InvitedIds) {
-          const q = query(invitesRef, where('inviterId', '==', id));
-          const s = await getDocs(q);
-          for (const d of s.docs) {
-            const data = d.data();
-            const email = await getUserEmail(data.invitedId);
-            members3.push({
-              id: data.invitedId,
-              email: email,
-              status: data.status || 'pending',
-              created_at: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : new Date().toISOString()
-            });
-          }
-        }
-      }
+      // --- FUNÇÃO AUXILIAR PARA FORMATAR OS DADOS ---
+      const formatMembers = (docs: any[]): TeamMember[] => {
+        return docs.map(d => ({
+          id: d.invitedId,
+          email: emailMap[d.invitedId] || 'Usuário Oculto',
+          status: d.status || 'pending',
+          created_at: d.createdAt?.toDate ? d.createdAt.toDate().toISOString() : new Date().toISOString()
+        }));
+      };
 
-      // Cálculo de ganhos apenas para quem NÃO está pendente (opcional)
+      const members1 = formatMembers(l1Docs);
+      const members2 = formatMembers(l2Docs);
+      const members3 = formatMembers(l3Docs);
+
+      // Cálculo de ganhos apenas para quem NÃO está pendente
       const calcEarned = (members: TeamMember[], value: number) => 
         members.filter(m => m.status !== 'pending').length * value;
 
@@ -130,14 +113,12 @@ export default function TeamPage() {
       });
 
     } catch (err) {
-      console.error('Erro:', err);
+      console.error('Erro ao carregar equipe:', err);
       toast.error('Erro ao carregar equipe');
     } finally {
       setLoading(false);
     }
   };
-
-  // ... (Mantenha o restante do código de renderização do componente anterior)
 
   const handleCopyCode = () => {
     if (user?.invite_code) {
@@ -340,7 +321,7 @@ export default function TeamPage() {
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 bg-[#22c55e]/20 rounded-full flex items-center justify-center">
                         <span className="text-[#22c55e] font-bold text-sm">
-                          {member.email[0].toUpperCase()}
+                          {member.email !== 'Usuário Oculto' && member.email !== 'Sem E-mail' ? member.email[0].toUpperCase() : '?'}
                         </span>
                       </div>
                       <div>
