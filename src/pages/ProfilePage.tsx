@@ -16,7 +16,8 @@ import { toast } from 'sonner';
 export default function ProfilePage() {
   const { user } = useAuth();
   const { transactions } = useTransactions();
-  const { loading: depositLoading, pixCode, initiateDeposit, resetDeposit } = useDeposit();
+  // CORREÇÃO 1: Adicionado o qrImage aqui
+  const { loading: depositLoading, pixCode, qrImage, initiateDeposit, resetDeposit } = useDeposit();
   const { loading: withdrawLoading, canWithdrawNow, initiateWithdraw } = useWithdraw();
 
   const [activeSection, setActiveSection] = useState<'main' | 'deposit' | 'withdraw'>('main');
@@ -283,6 +284,19 @@ export default function ProfilePage() {
               <p className="text-gray-400 mb-2">Valor do depósito</p>
               <p className="text-4xl font-bold text-[#22c55e]">R$ {Number(depositAmount).toFixed(2)}</p>
             </div>
+
+            {/* CORREÇÃO 2: Bloco do QR Code inserido aqui */}
+            {qrImage && (
+              <div className="flex justify-center mb-6">
+                <div className="bg-white p-3 rounded-xl inline-block">
+                  <img 
+                    src={qrImage} 
+                    alt="QR Code PIX" 
+                    className="w-48 h-48 object-contain"
+                  />
+                </div>
+              </div>
+            )}
 
             <div className="bg-[#0a0a0a] rounded-xl p-4 mb-4">
               <p className="text-gray-400 text-sm mb-2">Código PIX Copia e Cola</p>
