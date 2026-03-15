@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Eye, EyeOff, Mail, Lock, Users, AlertCircle, CheckCircle, User } from 'lucide-react';
@@ -17,6 +17,14 @@ export default function RegisterPage() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  // EFEITO PARA CAPTURAR CÓDIGO DO LOCALSTORAGE
+  useEffect(() => {
+    const savedCode = localStorage.getItem("inviteCode");
+    if (savedCode) {
+      setInviteCode(savedCode.toUpperCase());
+    }
+  }, []);
 
   const passwordsMatch = password === confirmPassword;
   const showPasswordError = confirmPassword.length > 0 && !passwordsMatch;
@@ -46,19 +54,26 @@ export default function RegisterPage() {
     setIsLoading(true);
 
     try {
-      await register(email, password, inviteCode || undefined);
+      // Passamos o inviteCode para a função de registro
+      // A lógica de busca do referido será feita dentro do AuthContext
+      await register(email, password, name, inviteCode || undefined);
+      
       toast.success('🎉 Conta criada!', {
         description: 'Parabéns! Seu cadastro foi realizado com sucesso',
         duration: 2000
       });
+
+      // Limpa o convite usado após o sucesso
+      localStorage.removeItem("inviteCode");
+
       setTimeout(() => {
-        navigate('/');
+        navigate('/home'); // Redireciona para home após o registro
       }, 2000);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Erro ao criar conta';
       setError(errorMessage);
       
-      if (errorMessage.includes('Email já cadastrado')) {
+      if (errorMessage.includes('auth/email-already-in-use')) {
         toast.error('Email já cadastrado', {
           description: 'Este email já está em uso'
         });
@@ -75,7 +90,6 @@ export default function RegisterPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0a0a0a] via-[#0f0f0f] to-[#0a0a0a] flex items-center justify-center p-4">
       <div className="w-full max-w-md animate-fade-in">
-        {/* Logo M */}
         <div className="text-center mb-8">
           <div className="w-20 h-20 mx-auto mb-4 bg-gradient-to-br from-[#22c55e] to-[#16a34a] rounded-2xl flex items-center justify-center shadow-2xl shadow-[#22c55e]/30">
             <span className="text-5xl font-bold text-white">M</span>
@@ -84,7 +98,6 @@ export default function RegisterPage() {
           <p className="text-gray-400">Crie sua conta gratuita</p>
         </div>
 
-        {/* Register Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
             <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 flex items-start gap-3 animate-slide-down">
