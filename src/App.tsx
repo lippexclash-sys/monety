@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { Toaster } from 'sonner';
@@ -76,28 +77,37 @@ function AppRoutes() {
 
   return (
     <Routes>
-      {/* Rotas Públicas (Redirecionam para home se já logado) */}
+      {/* Rotas Públicas */}
       <Route path="/" element={!user ? <LoginPage /> : <Navigate to="/home" replace />} />
       <Route path="/register" element={!user ? <RegisterPage /> : <Navigate to="/home" replace />} />
 
-      {/* Rotas Privadas (Protegidas pelo Layout) */}
+      {/* Rotas Privadas */}
       <Route element={<PrivateLayout />}>
         <Route path="/home" element={<HomePage />} />
         <Route path="/products" element={<ProductsPage />} />
         <Route path="/team" element={<TeamPage />} />
         <Route path="/profile" element={<ProfilePage />} />
-        
-        {/* Nova rota para a tela de depósito */}
         <Route path="/deposit" element={<DepositScreen />} />
       </Route>
 
-      {/* Rota Padrão 404 */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
 
 function App() {
+  useEffect(() => {
+    // Captura o código da URL: exemplo.com/?code=ABC123
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    
+    if (code) {
+      // Salva no localStorage para uso posterior no registro
+      localStorage.setItem("inviteCode", code);
+      console.log("Código de convite detectado e salvo:", code);
+    }
+  }, []);
+
   return (
     <BrowserRouter>
       <AuthProvider>
