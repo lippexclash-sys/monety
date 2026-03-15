@@ -1,6 +1,5 @@
 const admin = require('firebase-admin');
 
-// Inicialização segura do Firebase
 if (!admin.apps.length) {
   const privateKey = process.env.FIREBASE_PRIVATE_KEY;
   if (privateKey) {
@@ -23,13 +22,11 @@ exports.handler = async (event) => {
     const body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
     const transactionId = body.id || body.reference || (event.queryStringParameters ? event.queryStringParameters.id : null);
 
-    // Retorna JSON padronizado
     if (!transactionId) return { statusCode: 400, body: JSON.stringify({ error: 'ID ausente' }) };
 
     const statusCeto = String(body.status).toUpperCase();
     const isPaid = statusCeto === 'PAID' || statusCeto === 'COMPLETED' || body.success === true;
 
-    // Retorna JSON padronizado
     if (!isPaid) return { statusCode: 200, body: JSON.stringify({ message: 'Aguardando pagamento' }) };
 
     const depositRef = db.collection('deposits').doc(transactionId);
@@ -43,74 +40,65 @@ exports.handler = async (event) => {
     const userRef = db.collection('users').doc(userId);
 
     await db.runTransaction(async (transaction) => {
+      // --- 1. TODAS AS LEITURAS (READS) PRIMEIRO ---
+      
       const userSnap = await transaction.get(userRef);
-      if (!userSnap.exists) {
-         throw new Error(`Usuário não existe: ${userId}`);
+      if (!userSnap.exists) throw new Error(`Usuário não existe: ${userId}`);
+
+      // Leitura do Convite
+      const inviteQuery = db.collection('invites').where('invitedId', '==', userId).where('status', '==', 'pending').limit(1);
+      const inviteSnap = await transaction.get(inviteQuery);
+
+      // Leitura dos Padrinhos (Cadeia de 3 níveis)
+      let ref1Snap, ref2Snap, ref3Snap;
+      let ref1Id = userSnap.data().referredBy;
+      
+      if (ref1Id) {
+        ref1Snap = await transaction.get(db.collection('users').doc(ref1Id));
+        let ref2Id = ref1Snap.exists ? ref1Snap.data().referredBy : null;
+        
+        if (ref2Id) {
+          ref2Snap = await transaction.get(db.collection('users').doc(ref2Id));
+          let ref3Id = ref2Snap.exists ? ref2Snap.data().referredBy : null;
+          
+          if (ref3Id) {
+            ref3Snap = await transaction.get(db.collection('users').doc(ref3Id));
+          }
+        }
       }
 
-      // 1. Atualiza depósito e saldo do jogador
+      // --- 2. TODAS AS ESCRITAS (WRITES) DEPOIS ---
+
+      // Atualiza depósito e saldo do jogador
       transaction.update(depositRef, { status: 'approved', paidAt: admin.firestore.FieldValue.serverTimestamp() });
       transaction.update(userRef, { balance: admin.firestore.FieldValue.increment(Number(amount)) });
 
-      // 2. Atualiza o status do convite na coleção 'invites' (Usando transaction.get para manter consistência)
-      const inviteQuery = db.collection('invites')
-        .where('invitedId', '==', userId)
-        .where('status', '==', 'pending')
-        .limit(1);
-        
-      const inviteSnap = await transaction.get(inviteQuery);
-      
+      // Atualiza convite
       if (!inviteSnap.empty) {
         transaction.update(inviteSnap.docs[0].ref, { status: 'completed' });
       }
 
-      // 3. Distribuição de Comissões em Cadeia
-      let currentReferrerId = userSnap.data().referredBy;
-
-      // --- NÍVEL 1 (20%) ---
-      if (currentReferrerId) {
-        const ref1Ref = db.collection('users').doc(currentReferrerId);
-        const ref1Snap = await transaction.get(ref1Ref);
+      // Distribui comissões
+      if (ref1Snap?.exists) {
+        const bonus1 = Number(amount) * 0.20;
+        transaction.update(ref1Snap.ref, {
+          balance: admin.firestore.FieldValue.increment(bonus1),
+          totalCommissions: admin.firestore.FieldValue.increment(bonus1)
+        });
         
-        if (ref1Snap.exists) {
-          const bonus1 = Number(amount) * 0.20;
-          transaction.update(ref1Ref, {
-            balance: admin.firestore.FieldValue.increment(bonus1),
-            totalCommissions: admin.firestore.FieldValue.increment(bonus1)
+        if (ref2Snap?.exists) {
+          const bonus2 = Number(amount) * 0.05;
+          transaction.update(ref2Snap.ref, {
+            balance: admin.firestore.FieldValue.increment(bonus2),
+            totalCommissions: admin.firestore.FieldValue.increment(bonus2)
           });
 
-          // Pega o pai do Nível 1 para pagar o Nível 2
-          currentReferrerId = ref1Snap.data().referredBy;
-
-          // --- NÍVEL 2 (5%) ---
-          if (currentReferrerId) {
-            const ref2Ref = db.collection('users').doc(currentReferrerId);
-            const ref2Snap = await transaction.get(ref2Ref);
-
-            if (ref2Snap.exists) {
-              const bonus2 = Number(amount) * 0.05;
-              transaction.update(ref2Ref, {
-                balance: admin.firestore.FieldValue.increment(bonus2),
-                totalCommissions: admin.firestore.FieldValue.increment(bonus2)
-              });
-
-              // Pega o pai do Nível 2 para pagar o Nível 3
-              currentReferrerId = ref2Snap.data().referredBy;
-
-              // --- NÍVEL 3 (1%) ---
-              if (currentReferrerId) {
-                const ref3Ref = db.collection('users').doc(currentReferrerId);
-                const ref3Snap = await transaction.get(ref3Ref);
-
-                if (ref3Snap.exists) {
-                  const bonus3 = Number(amount) * 0.01;
-                  transaction.update(ref3Ref, {
-                    balance: admin.firestore.FieldValue.increment(bonus3),
-                    totalCommissions: admin.firestore.FieldValue.increment(bonus3)
-                  });
-                }
-              }
-            }
+          if (ref3Snap?.exists) {
+            const bonus3 = Number(amount) * 0.01;
+            transaction.update(ref3Snap.ref, {
+              balance: admin.firestore.FieldValue.increment(bonus3),
+              totalCommissions: admin.firestore.FieldValue.increment(bonus3)
+            });
           }
         }
       }
@@ -119,7 +107,6 @@ exports.handler = async (event) => {
     return { statusCode: 200, body: JSON.stringify({ success: true, message: 'Processado com sucesso' }) };
   } catch (error) {
     console.error("Erro no processamento:", error);
-    // Devolve JSON para o frontend não engasgar
-    return { statusCode: 500, body: JSON.stringify({ error: error.message || 'Erro interno' }) };
+    return { statusCode: 500, body: JSON.stringify({ error: error.message }) };
   }
 };
