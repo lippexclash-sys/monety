@@ -4,6 +4,7 @@
 const axios = require('axios');
 const admin = require('firebase-admin');
 
+// 1. Inicialização segura do Firebase
 if (!admin.apps.length) {
   const privateKey = process.env.FIREBASE_PRIVATE_KEY;
   if (privateKey) {
@@ -20,6 +21,7 @@ if (!admin.apps.length) {
 const db = admin.apps.length ? admin.firestore() : null;
 
 exports.handler = async (event) => {
+  // Configuração de Headers para CORS
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
@@ -38,6 +40,7 @@ exports.handler = async (event) => {
 
     console.log('=== INICIANDO CRIAÇÃO DE PAGAMENTO EVOPAY ===', { userId, amount });
 
+    // Validações Básicas
     if (!amount || !userId || !userName || !userDocument) {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'Campos obrigatórios: amount, userId, userName, userDocument' }) };
     }
@@ -46,8 +49,10 @@ exports.handler = async (event) => {
     if (cleanDocument.length !== 11 && cleanDocument.length !== 14) {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'Documento inválido.' }) };
     }
+    
+    // Validar valor mínimo (ajuste conforme sua regra)
     if (parseFloat(amount) < 1) {
-      return { statusCode: 400, headers, body: JSON.stringify({ error: 'Depósito mínimo é R$ 30,00' }) };
+      return { statusCode: 400, headers, body: JSON.stringify({ error: 'O valor mínimo é R$ 1,00' }) };
     }
 
     let cleanName = (userName || "Cliente").replace(/[^a-zA-Z ]/g, "").trim();
@@ -57,45 +62,46 @@ exports.handler = async (event) => {
     if (!evopayToken) throw new Error("Token EVOPAY_TOKEN não configurado.");
 
     const SITE_URL = process.env.URL || 'http://localhost:8888';
-    const callbackUrl = `${SITE_URL}/.netlify/functions/webhook-payment?u=${userId}`;
+    const callbackUrl = `${SITE_URL}/.netlify/functions/webhook-payment`;
 
-    // 1. Gerar o ID do documento antecipadamente
+    // ---------------------------------------------------------
+    // 2. GERAR O ID DO DEPÓSITO ANTECIPADAMENTE (O SEGREDO)
+    // ---------------------------------------------------------
     const depositRef = db.collection('deposits').doc();
     const transactionId = depositRef.id;
 
-    // 2. Chamada à EvoPay enviando a "reference"
+    // 3. Chamada à EvoPay enviando o 'reference'
     const response = await axios.post('https://pix.evopay.cash/v1/pix', {
       amount: parseFloat(amount),
       callbackUrl: callbackUrl,
       payerName: cleanName,
       payerDocument: cleanDocument,
-      reference: transactionId // <-- ID do Firestore enviado como referência
+      reference: transactionId // <-- Vincula o PIX ao documento do Firestore
     }, {
-      headers: { 'API-Key': evopayToken, 'Content-Type': 'application/json' }
+      headers: { 
+        'API-Key': evopayToken, 
+        'Content-Type': 'application/json' 
+      }
     });
 
-    // 3. Extração Robusta do Código PIX
+    // 4. Extração do Código PIX
     const paymentData = response.data;
-    
-    // Mapeamos todas as chaves possíveis para máxima compatibilidade com as respostas da API
     const brCode = 
       paymentData?.qrCodeText || 
       paymentData?.qrcode || 
       paymentData?.qrCode || 
       paymentData?.pixCode || 
-      paymentData?.data?.qrcode || 
-      paymentData?.data?.qrCodeText;
+      paymentData?.data?.qrcode;
 
-    // Se falhar, lançamos erro com log do formato exato para depuração
     if (!brCode) {
-      console.error("Resposta inesperada da EvoPay, brCode não encontrado:", JSON.stringify(paymentData));
-      throw new Error("Código PIX não retornado pela EvoPay. Verifique os logs.");
+      console.error("Resposta inesperada da EvoPay:", JSON.stringify(paymentData));
+      throw new Error("Código PIX não retornado pela EvoPay.");
     }
 
-    // 4. Geração do link da Imagem QR Code
+    // 5. Link da Imagem QR Code
     const qrImage = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(brCode)}`;
     
-    // 5. Salvando no Firestore com o Vínculo e Referência Corretos
+    // 6. Salvar no Firestore com status pendente
     await depositRef.set({
       userId: userId,
       userName: userName, 
@@ -108,7 +114,7 @@ exports.handler = async (event) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    // 6. Retorno para o Frontend (React)
+    // 7. Retorno para o Frontend
     return {
       statusCode: 200,
       headers,
@@ -117,8 +123,8 @@ exports.handler = async (event) => {
         pixCode: brCode,
         qrImage: qrImage,
         transactionId: transactionId,
-        pix_code: brCode,
-        qr_image: qrImage 
+        pix_code: brCode, // compatibilidade
+        qr_image: qrImage  // compatibilidade
       })
     };
 
