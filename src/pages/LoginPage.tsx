@@ -27,19 +27,17 @@ export default function LoginPage() {
       });
       navigate('/home');
     } catch (err: any) {
-      // Pega o código ou a mensagem de erro que vem do Firebase
       const errorString = err?.code || err?.message || '';
       let errorMsg = 'Ocorreu um erro inesperado ao fazer login. Tente novamente.';
 
-      // Mapeia os erros do Firebase para mensagens profissionais
       if (errorString.includes('auth/invalid-credential') || errorString.includes('auth/user-not-found') || errorString.includes('auth/wrong-password')) {
-        errorMsg = 'E-mail ou senha incorretos. Verifique seus dados e tente novamente.';
+        errorMsg = 'E-mail ou senha incorretos. Verifique os seus dados e tente novamente.';
       } else if (errorString.includes('auth/invalid-email')) {
         errorMsg = 'O endereço de e-mail fornecido é inválido.';
       } else if (errorString.includes('auth/too-many-requests')) {
-        errorMsg = 'Muitas tentativas falhas. Por segurança, aguarde alguns minutos e tente novamente.';
+        errorMsg = 'Muitas tentativas falhadas. Por segurança, aguarde alguns minutos e tente novamente.';
       } else if (errorString.includes('auth/network-request-failed')) {
-        errorMsg = 'Erro de conexão. Verifique sua internet e tente novamente.';
+        errorMsg = 'Erro de ligação. Verifique a sua internet e tente novamente.';
       }
 
       setError(errorMsg);
@@ -106,12 +104,22 @@ export default function LoginPage() {
               </button>
             </div>
 
+            {/* Link para recuperar senha */}
+            <div className="flex justify-end">
+              <Link 
+                to="/forgot-password" 
+                className="text-sm text-gray-400 hover:text-[#22c55e] transition-colors"
+              >
+                Esqueci a minha senha?
+              </Link>
+            </div>
+
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-gradient-to-r from-[#22c55e] to-[#16a34a] hover:from-[#16a34a] hover:to-[#22c55e] text-white font-semibold py-6 text-lg shadow-lg shadow-[#22c55e]/30 transition-all rounded-xl disabled:opacity-50"
+              className="w-full bg-gradient-to-r from-[#22c55e] to-[#16a34a] hover:from-[#16a34a] hover:to-[#22c55e] text-white font-semibold py-6 text-lg shadow-lg shadow-[#22c55e]/30 transition-all rounded-xl disabled:opacity-50 mt-2"
             >
-              {loading ? 'Entrando...' : 'Entrar'}
+              {loading ? 'A entrar...' : 'Entrar'}
             </button>
           </form>
 
@@ -122,7 +130,7 @@ export default function LoginPage() {
                 to="/register"
                 className="text-[#22c55e] hover:text-[#16a34a] font-semibold transition-colors hover:underline"
               >
-                Registrar
+                Registar
               </Link>
             </p>
           </div>
