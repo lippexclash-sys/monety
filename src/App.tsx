@@ -7,6 +7,7 @@ import { Home, ShoppingBag, Users, User } from 'lucide-react';
 // Importação das páginas
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import ForgotPassword from './pages/ForgotPassword'; // Adicionado para o sistema de recuperação
 import HomePage from './pages/HomePage';
 import ProductsPage from './pages/ProductsPage';
 import ProfilePage from './pages/ProfilePage';
@@ -80,6 +81,9 @@ function AppRoutes() {
       {/* Rotas Públicas */}
       <Route path="/" element={!user ? <LoginPage /> : <Navigate to="/home" replace />} />
       <Route path="/register" element={!user ? <RegisterPage /> : <Navigate to="/home" replace />} />
+      
+      {/* Nova rota de recuperação de senha adicionada */}
+      <Route path="/forgot-password" element={!user ? <ForgotPassword /> : <Navigate to="/home" replace />} />
 
       {/* Rotas Privadas */}
       <Route element={<PrivateLayout />}>
