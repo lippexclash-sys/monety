@@ -26,10 +26,24 @@ export default function LoginPage() {
         duration: 3000
       });
       navigate('/home');
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Erro ao fazer login';
+    } catch (err: any) {
+      // Pega o código ou a mensagem de erro que vem do Firebase
+      const errorString = err?.code || err?.message || '';
+      let errorMsg = 'Ocorreu um erro inesperado ao fazer login. Tente novamente.';
+
+      // Mapeia os erros do Firebase para mensagens profissionais
+      if (errorString.includes('auth/invalid-credential') || errorString.includes('auth/user-not-found') || errorString.includes('auth/wrong-password')) {
+        errorMsg = 'E-mail ou senha incorretos. Verifique seus dados e tente novamente.';
+      } else if (errorString.includes('auth/invalid-email')) {
+        errorMsg = 'O endereço de e-mail fornecido é inválido.';
+      } else if (errorString.includes('auth/too-many-requests')) {
+        errorMsg = 'Muitas tentativas falhas. Por segurança, aguarde alguns minutos e tente novamente.';
+      } else if (errorString.includes('auth/network-request-failed')) {
+        errorMsg = 'Erro de conexão. Verifique sua internet e tente novamente.';
+      }
+
       setError(errorMsg);
-      toast.error('Erro ao fazer login', {
+      toast.error('Falha na Autenticação', {
         description: errorMsg
       });
     } finally {
