@@ -35,19 +35,19 @@ export default function RegisterPage() {
 
     if (!name.trim()) {
       setError('Digite seu nome');
-      toast.error('Digite seu nome');
+      toast.error('Aviso', { description: 'Digite seu nome completo' });
       return;
     }
 
     if (!passwordsMatch) {
       setError('As senhas não coincidem');
-      toast.error('As senhas não coincidem');
+      toast.error('Aviso', { description: 'As senhas não coincidem' });
       return;
     }
 
     if (password.length < 6) {
       setError('A senha deve ter pelo menos 6 caracteres');
-      toast.error('A senha deve ter pelo menos 6 caracteres');
+      toast.error('Aviso', { description: 'A senha deve ter pelo menos 6 caracteres' });
       return;
     }
 
@@ -69,19 +69,28 @@ export default function RegisterPage() {
       setTimeout(() => {
         navigate('/home'); // Redireciona para home após o registro
       }, 2000);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Erro ao criar conta';
-      setError(errorMessage);
-      
-      if (errorMessage.includes('auth/email-already-in-use')) {
-        toast.error('Email já cadastrado', {
-          description: 'Este email já está em uso'
-        });
-      } else {
-        toast.error('Erro ao criar conta', {
-          description: errorMessage
-        });
+    } catch (err: any) {
+      // Pega o código ou a mensagem de erro que vem do Firebase
+      const errorString = err?.code || err?.message || '';
+      let errorMsg = 'Ocorreu um erro inesperado ao criar a conta. Tente novamente.';
+
+      // Mapeia os erros de registro do Firebase para mensagens profissionais
+      if (errorString.includes('auth/email-already-in-use')) {
+        errorMsg = 'Este e-mail já está cadastrado. Tente fazer login ou use outro e-mail.';
+      } else if (errorString.includes('auth/invalid-email')) {
+        errorMsg = 'O endereço de e-mail fornecido é inválido.';
+      } else if (errorString.includes('auth/weak-password')) {
+        errorMsg = 'A senha escolhida é muito fraca. Escolha uma senha mais segura.';
+      } else if (errorString.includes('auth/network-request-failed')) {
+        errorMsg = 'Erro de conexão. Verifique sua internet e tente novamente.';
+      } else if (errorString.includes('auth/too-many-requests')) {
+        errorMsg = 'Muitas tentativas. Por segurança, aguarde alguns minutos e tente novamente.';
       }
+
+      setError(errorMsg);
+      toast.error('Falha no Cadastro', {
+        description: errorMsg
+      });
     } finally {
       setIsLoading(false);
     }
