@@ -4,6 +4,7 @@ import {
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
   onAuthStateChanged,
+  sendPasswordResetEmail, // <-- Nova importação adicionada
   User as FirebaseUser
 } from 'firebase/auth';
 
@@ -44,6 +45,7 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, name: string, inviteCode?: string) => Promise<void>;
   logout: () => Promise<void>;
+  resetPassword: (email: string) => Promise<void>; // <-- Nova tipagem adicionada
   refreshUser: () => Promise<void>;
   updateBalance: (amount: number) => Promise<void>;
   completeSpin: (prizeAmount: number) => Promise<void>;
@@ -153,7 +155,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           inviterUid = snapshot.docs[0].id; // ID do usuário que convidou
 
           // 3. Registra na coleção 'invites' com status pending
-          // O seu webhook mudará este status para 'completed' no primeiro depósito
           await addDoc(collection(db, 'invites'), {
             createdAt: serverTimestamp(),
             invitedId: uid,
@@ -173,7 +174,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         email: email,
         balance: 0,
         inviteCode: myInviteCode,
-        referredBy: inviterUid || null, // Vínculo essencial para o sistema de 20%, 5% e 1%
+        referredBy: inviterUid || null, 
         totalEarned: 0,
         totalWithdrawn: 0,
         spinsAvailable: 1, 
@@ -203,6 +204,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setToken(null);
   };
 
+  // <-- NOVA FUNÇÃO DE RECUPERAÇÃO DE SENHA AQUI -->
+  const resetPassword = async (email: string) => {
+    try {
+      await sendPasswordResetEmail(auth, email);
+    } catch (error) {
+      console.error("Erro ao enviar email de redefinição:", error);
+      throw error;
+    }
+  };
+
   const updateBalance = async (amount: number) => {
     if (!auth.currentUser) return;
     const userRef = doc(db, 'users', auth.currentUser.uid);
@@ -227,7 +238,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, login, register, logout, refreshUser, updateBalance, completeSpin }}>
+    <AuthContext.Provider value={{ 
+      user, 
+      token, 
+      login, 
+      register, 
+      logout, 
+      resetPassword, // <-- Expondo a função no Provider
+      refreshUser, 
+      updateBalance, 
+      completeSpin 
+    }}>
       {children}
     </AuthContext.Provider>
   );
